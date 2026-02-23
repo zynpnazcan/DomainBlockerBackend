@@ -1,0 +1,11 @@
+###
+POST http://localhost:8080/api/domain-block
+Content-Type: application/json
+
+{
+  "domains": ["deneme-2.com"]
+}
+###
+DELETE http://localhost:8080/api/domain-block/unblock?domain=deneme-2.com
+###
+GET http://localhost:8080/api/domain-block/all
