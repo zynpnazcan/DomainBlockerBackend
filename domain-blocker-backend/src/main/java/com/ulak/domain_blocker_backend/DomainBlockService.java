@@ -1,15 +1,19 @@
 package com.ulak.domain_blocker_backend;
+
 import com.jcraft.jsch.ChannelExec;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
-import org.springframework.beans.factory.annotation.Value;
+import java.util.UUID;
+
 @Service
 @Slf4j
 public class DomainBlockService {
@@ -26,12 +30,23 @@ public class DomainBlockService {
     @Value("${ssh.password}")
     private String password;
 
+    public boolean isValidDomain(String domain) {
+
+        String regex = "^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\\.[a-zA-Z]{2,})+$";
+        return domain != null && domain.matches(regex);
+    }
+
     public List<String> blockDomains(List<String> domainNames) {
         List<String> results = new ArrayList<>();
 
         for (String domainName : domainNames) {
+            if (!isValidDomain(domainName)) {
+                log.error("Geçersiz domain formatı reddedildi: {}", domainName);
+                throw new IllegalArgumentException("Geçersiz domain formatı: " + domainName);
+            }
+
             if (repository.existsByDomainName(domainName)) {
-                throw new IllegalArgumentException(domainName + " zaten engelli listesinde bulunuyor!");
+                throw new IllegalArgumentException("ERROR_ALREADY_EXISTS");
             }
 
             BlockedDomain blockedDomain = new BlockedDomain();
@@ -40,28 +55,41 @@ public class DomainBlockService {
             repository.save(blockedDomain);
 
             String command = "echo '" + password + "' | sudo -S sh -c \"echo '127.0.0.1 " + domainName + "' >> /etc/hosts\"";
-            executeSshCommand(command, "Bloklama: " + domainName);
-
-            results.add(domainName + " başarıyla engellendi.");
+            String sshResult = executeSshCommand(command, "Bloklama: " + domainName);
+            if ("SUCCESS_SERVER_UPDATED".equals(sshResult)) {
+                log.info("SSH İşlemi Başarılı: {} domaini uzak sunucudaki /etc/hosts dosyasına eklendi.", domainName);
+            } else {
+                log.error("SSH İşlemi Başarısız: {} eklenirken sunucuda hata oluştu. Detay: {}", domainName, sshResult);
+            }
+            results.add(domainName + " için işlem sonucu: " + sshResult);
         }
         return results;
     }
 
     @Transactional
-    public void unblockDomain(String domain) {
+    public String unblockDomain(String domain) {
         repository.deleteByDomainName(domain);
-        log.info("Veritabanından silindi: {}", domain);
+
         String command = "echo '" + password + "' | sudo -S sed -i \"/" + domain + "/d\" /etc/hosts";
-        executeSshCommand(command, "Kaldırma: " + domain);
+        String result = executeSshCommand(command, "Kaldırma: " + domain);
+
+        if ("SUCCESS_SERVER_UPDATED".equals(result)) {
+            log.info("SSH İşlemi Başarılı: {} domaini uzak sunucudaki /etc/hosts dosyasından temizlendi.", domain);
+        } else {
+            log.error("SSH İşlemi Başarısız: Sunucuda hata oluştu. Detay: {}", result);
+        }
+
+        return result;
     }
 
     public List<BlockedDomain> getAllBlockedDomains() {
-        return repository.findAll();
+        return repository.findAllByOrderByAppliedAtAsc();
     }
 
-    private void executeSshCommand(String command, String context) {
+    private String executeSshCommand(String command, String context) {
         Session session = null;
         ChannelExec channel = null;
+
         try {
             JSch jsch = new JSch();
             session = jsch.getSession(user, host, 22);
@@ -71,32 +99,34 @@ public class DomainBlockService {
 
             channel = (ChannelExec) session.openChannel("exec");
             channel.setCommand(command);
-            InputStream errStream = channel.getErrStream();
             channel.connect();
 
-            while (!channel.isClosed()) {
-                Thread.sleep(100);
-            }
+            return checkStreamForErrors(channel, context);
 
-            if (errStream.available() > 0) {
-                byte[] tmp = new byte[1024];
-                int i = errStream.read(tmp, 0, 1024);
-                String errorMsg = new String(tmp, 0, i);
-                if (!errorMsg.contains("[sudo] password for")) {
-                    log.error("SSH Hatası ({}): {}", context, errorMsg);
-                } else {
-                    log.info("SSH İşlemi Başarılı (Yetki Onaylı): {}", context);
-                }
-            } else {
-                log.info("SSH İşlemi Başarılı: {}", context);
-            }
         } catch (Exception e) {
-            log.error("Sistem Hatası: {}", e.getMessage());
-        }
-        finally {
+            log.error("SSH Bağlantı veya Komut Hatası ({}): {}", context, e.getMessage());
+            return "Hata: " + e.getMessage();
+        } finally {
+
             if (channel != null) channel.disconnect();
             if (session != null) session.disconnect();
         }
     }
 
+    private String checkStreamForErrors(ChannelExec channel, String context) throws Exception {
+        InputStream errStream = channel.getErrStream();
+        while (!channel.isClosed()) {
+            Thread.sleep(100);
+        }
+
+        if (errStream.available() > 0) {
+            byte[] tmp = new byte[1024];
+            int i = errStream.read(tmp, 0, 1024);
+            String msg = new String(tmp, 0, i);
+            if (!msg.contains("[sudo] password for")) {
+                return "SERVER_ERROR:" + msg;
+            }
+        }
+        return "SUCCESS_SERVER_UPDATED";
+    }
 }

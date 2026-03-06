@@ -22,9 +22,9 @@ public class DomainBlockController {
         return ResponseEntity.ok(result);
     }
     @DeleteMapping("/unblock")
-    public String unblockDomain(@RequestParam String domain){
-        domainBlockService.unblockDomain(domain);
-        return domain + "için engel kaldırıldı";
+    public ResponseEntity<String> unblockDomain(@RequestParam String domain) {
+        String result = domainBlockService.unblockDomain(domain);
+        return ResponseEntity.ok(result);
     }
     @GetMapping("/all")
     public List<BlockedDomain> getAll() {

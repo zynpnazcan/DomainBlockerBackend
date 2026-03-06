@@ -21,3 +21,4 @@ public class RequestLoggingInterceptor implements HandlerInterceptor{
         log.info("<<< İstek Tamamlandı: Status {}", response.getStatus());
     }
 }
+
