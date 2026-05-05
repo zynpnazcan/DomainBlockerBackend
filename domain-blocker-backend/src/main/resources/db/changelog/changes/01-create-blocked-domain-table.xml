@@ -8,7 +8,7 @@
     <changeSet id="20260225-1" author="zeynep">
         <preConditions onFail="MARK_RAN">
             <not>
-                <tableExists tableName="blocked_domain"/>
+                <tableExists tableName="blocked_domains"/>
             </not>
         </preConditions>
         <createTable tableName="blocked_domains">

@@ -1,33 +1,71 @@
 package com.ulak.domain_blocker_backend;
-import org.springframework.beans.factory.annotation.Autowired;
+
+import com.ulak.domain_blocker_backend.dto.BlockedDomainDTO;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.http.ResponseEntity;
+import java.util.stream.Collectors;
+import org.springframework.data.domain.Page;
 
-
-@CrossOrigin(origins="http://localhost:4200")
 @RestController
 @RequestMapping("/api/domain-block")
-
 public class DomainBlockController {
-    @Autowired
-    private DomainBlockService domainBlockService;
+
+    private final DomainBlockService domainBlockService;
+
+    public DomainBlockController(DomainBlockService domainBlockService) {
+        this.domainBlockService = domainBlockService;
+    }
 
     @PostMapping
-    public ResponseEntity<List<String>> blockDomains(@RequestBody DomainRequest request) {
-        List<String> domains = request.getDomains();
-        List<String> result = domainBlockService.blockDomains(domains);
+    public ResponseEntity<Map<String, Object>> blockDomains(@RequestBody DomainRequest request) {
+        List<String> result = domainBlockService.blockDomains(request.getDomains());
 
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "details", result
+        ));
     }
+
     @DeleteMapping("/unblock")
-    public ResponseEntity<String> unblockDomain(@RequestParam String domain) {
+    public ResponseEntity<Map<String, String>> unblockDomain(@RequestParam String domain) {
         String result = domainBlockService.unblockDomain(domain);
-        return ResponseEntity.ok(result);
+
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", "Domain unblocked successfully",
+                "detail", result
+        ));
     }
+
     @GetMapping("/all")
-    public List<BlockedDomain> getAll() {
-        return domainBlockService.getAllBlockedDomains();
+    public ResponseEntity<Map<String, Object>> getAll(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "") String search) {
+
+        // 1. Servisten sayfalanmış veriyi çek
+        Page<BlockedDomain> domainPage = domainBlockService.getAllBlockedDomains(page,size,search);
+
+        // 2. Entity'leri güvenli DTO'lara çevir
+        List<BlockedDomainDTO> dtoList = domainPage.getContent()
+                .stream()
+                .map(domain -> new BlockedDomainDTO(
+                        domain.getDomainName(),
+                        domain.getAppliedBy(),
+                        domain.getAppliedAt()))
+                .collect(Collectors.toList());
+
+        // 3. Frontend'in okuyabilmesi için kurumsal bir JSON (Map) formatı oluştur
+        Map<String, Object> response = new HashMap<>();
+        response.put("domains", dtoList);
+        response.put("currentPage", domainPage.getNumber());
+        response.put("totalItems", domainPage.getTotalElements());
+        response.put("totalPages", domainPage.getTotalPages());
+
+        return ResponseEntity.ok(response);
     }
 }
